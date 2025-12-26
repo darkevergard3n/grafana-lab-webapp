@@ -1,0 +1,118 @@
+# =============================================================================
+# SPRING BOOT APPLICATION CONFIGURATION
+# =============================================================================
+# This file configures the User Service Spring Boot application.
+#
+# LEARNING NOTES:
+# - YAML is more readable than properties files
+# - Spring Boot supports externalized configuration
+# - Environment variables override these defaults
+# - Use ${VAR:default} syntax for env var substitution
+# =============================================================================
+
+# Server configuration
+server:
+  port: ${SERVER_PORT:8004}
+  shutdown: graceful  # Enable graceful shutdown
+
+# Application info
+spring:
+  application:
+    name: user-service
+  
+  # ==========================================================================
+  # DATABASE CONFIGURATION
+  # ==========================================================================
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orderdb}
+    username: ${SPRING_DATASOURCE_USERNAME:webapp}
+    password: ${SPRING_DATASOURCE_PASSWORD:webapp}
+    driver-class-name: org.postgresql.Driver
+    
+    # HikariCP connection pool settings
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 300000      # 5 minutes
+      max-lifetime: 1200000     # 20 minutes
+      connection-timeout: 30000 # 30 seconds
+  
+  # JPA / Hibernate configuration
+  jpa:
+    hibernate:
+      ddl-auto: update  # Auto-create/update tables (use 'none' in production)
+    show-sql: false     # Set to true for debugging
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  
+  # ==========================================================================
+  # REDIS CONFIGURATION
+  # ==========================================================================
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      timeout: 5000ms
+  
+  # ==========================================================================
+  # SECURITY CONFIGURATION
+  # ==========================================================================
+  security:
+    # Disable default security for specific paths
+    # (we'll configure custom security)
+
+# =============================================================================
+# JWT CONFIGURATION
+# =============================================================================
+jwt:
+  secret: ${JWT_SECRET:your-256-bit-secret-key-for-jwt-signing-minimum-32-chars}
+  expiration: ${JWT_EXPIRATION:86400000}  # 24 hours in milliseconds
+
+# =============================================================================
+# ACTUATOR CONFIGURATION (Health & Metrics)
+# =============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        # Expose these endpoints
+        include: health,info,prometheus,metrics
+      base-path: /  # Expose at root (e.g., /health, /metrics)
+  
+  endpoint:
+    health:
+      show-details: always  # Show detailed health info
+      probes:
+        enabled: true       # Enable Kubernetes probes
+  
+  # Prometheus metrics configuration
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  
+  # Custom health indicators
+  health:
+    db:
+      enabled: true
+    redis:
+      enabled: true
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+logging:
+  level:
+    root: INFO
+    com.example.userservice: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN
+  
+  pattern:
+    # JSON logging pattern for Loki
+    console: '{"timestamp":"%d{yyyy-MM-dd HH:mm:ss.SSS}","level":"%level","service":"user-service","thread":"%thread","class":"%logger{36}","message":"%msg"}%n'

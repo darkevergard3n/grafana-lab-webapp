@@ -1,0 +1,751 @@
+# =============================================================================
+# DOCKER COMPOSE - Enterprise Order Management System
+# =============================================================================
+# 
+# This file orchestrates all microservices and infrastructure components
+# for the webapp server. The Grafana stack should be deployed separately.
+#
+# USAGE:
+#   docker compose up -d          # Start all services
+#   docker compose down           # Stop all services
+#   docker compose logs -f        # View logs
+#   docker compose ps             # Check status
+#   docker compose build          # Rebuild images
+#
+# ARCHITECTURE:
+#   - Frontend (Next.js) → Traefik → Microservices → Databases
+#   - Each microservice has /health, /ready, and /metrics endpoints
+#   - Prometheus scrapes metrics from all services
+#
+# =============================================================================
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+# All services communicate through this internal network
+# Services can reach each other by container name (DNS)
+# Example: order-service can call http://inventory-service:8002
+# -----------------------------------------------------------------------------
+networks:
+  webapp-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+# Persistent storage for databases and stateful services
+# Data survives container restarts and recreations
+# -----------------------------------------------------------------------------
+volumes:
+  # PostgreSQL data directory
+  postgres-data:
+    driver: local
+  
+  # Redis data (RDB snapshots and AOF)
+  redis-data:
+    driver: local
+  
+  # RabbitMQ data (queues, exchanges, messages)
+  rabbitmq-data:
+    driver: local
+  
+  # Promtail positions (log shipping state)
+  promtail-positions:
+    driver: local
+
+# =============================================================================
+# SERVICES
+# =============================================================================
+services:
+
+  # ===========================================================================
+  # INFRASTRUCTURE LAYER
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # TRAEFIK - API Gateway / Reverse Proxy
+  # ---------------------------------------------------------------------------
+  # Traefik routes incoming HTTP requests to the appropriate microservice
+  # based on URL path. It also provides:
+  # - Load balancing
+  # - Health checking
+  # - Metrics exposure
+  # - Dashboard for debugging
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    
+    # Command line arguments to configure Traefik
+    command:
+      # Enable the API and dashboard (for development/debugging)
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      
+      # Configure Docker provider to auto-discover services
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=webapp-network"
+      
+      # Configure HTTP entrypoint on port 80
+      - "--entrypoints.web.address=:80"
+      
+      # Enable Prometheus metrics
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.entryPoint=metrics"
+      - "--entrypoints.metrics.address=:8082"
+      
+      # Enable access logging (useful for debugging)
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+    
+    ports:
+      # HTTP traffic entry point
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      
+      # Dashboard and metrics
+      - "${TRAEFIK_DASHBOARD_PORT:-8080}:8080"
+      
+      # Prometheus metrics endpoint
+      - "8082:8082"
+    
+    volumes:
+      # Docker socket allows Traefik to discover containers
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    
+    networks:
+      - webapp-network
+    
+    labels:
+      # Enable Traefik for this service
+      - "traefik.enable=true"
+      
+      # Dashboard route (access at http://localhost:8080/dashboard/)
+      - "traefik.http.routers.dashboard.rule=PathPrefix(`/api`) || PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+    
+    # Health check ensures Traefik is ready before routing traffic
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # POSTGRESQL - Primary Database
+  # ---------------------------------------------------------------------------
+  # PostgreSQL stores all persistent application data:
+  # - Orders (order-service)
+  # - Inventory (inventory-service)
+  # - Users (user-service)
+  # - Payments (payment-service)
+  # 
+  # Each service uses a separate schema for isolation
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    
+    environment:
+      # Database credentials (loaded from .env file)
+      POSTGRES_USER: ${POSTGRES_USER:-webapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webapp_password}
+      POSTGRES_DB: ${POSTGRES_DB:-orderdb}
+      
+      # Performance tuning for development
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    
+    ports:
+      # Expose for external access (e.g., database tools)
+      - "${POSTGRES_PORT:-5432}:5432"
+    
+    volumes:
+      # Persistent data storage
+      - postgres-data:/var/lib/postgresql/data
+      
+      # Initialization scripts run on first startup
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    
+    networks:
+      - webapp-network
+    
+    # Health check for PostgreSQL readiness
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webapp} -d ${POSTGRES_DB:-orderdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # REDIS - Cache and Session Store
+  # ---------------------------------------------------------------------------
+  # Redis provides fast in-memory storage for:
+  # - Session data
+  # - API response caching
+  # - Rate limiting counters
+  # - Real-time inventory levels
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    
+    # Start Redis with password authentication and persistence
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis_password}
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    
+    volumes:
+      - redis-data:/data
+    
+    networks:
+      - webapp-network
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # RABBITMQ - Message Queue
+  # ---------------------------------------------------------------------------
+  # RabbitMQ enables asynchronous communication between services:
+  # - Order events: When an order is created/updated/cancelled
+  # - Notification triggers: Email/SMS notifications
+  # - Event sourcing: Audit trail of all business events
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-webapp}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitmq_password}
+    
+    ports:
+      # AMQP protocol (application connections)
+      - "${RABBITMQ_PORT:-5672}:5672"
+      
+      # Management UI (http://localhost:15672)
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    
+    networks:
+      - webapp-network
+    
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================================================
+  # MICROSERVICES LAYER
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # ORDER SERVICE (Go + Gin)
+  # ---------------------------------------------------------------------------
+  # Handles order lifecycle management:
+  # - Create new orders
+  # - Update order status
+  # - List/search orders
+  # - Orchestrate inventory reservation and payment
+  # ---------------------------------------------------------------------------
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    restart: unless-stopped
+    
+    environment:
+      # Server configuration
+      PORT: "8001"
+      GIN_MODE: release
+      
+      # Database connection
+      DATABASE_URL: "postgres://${POSTGRES_USER:-webapp}:${POSTGRES_PASSWORD:-webapp_password}@postgres:5432/${POSTGRES_DB:-orderdb}?sslmode=disable"
+      
+      # Redis connection
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0"
+      
+      # RabbitMQ connection
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:-webapp}:${RABBITMQ_PASSWORD:-rabbitmq_password}@rabbitmq:5672/"
+      
+      # Service discovery (internal URLs)
+      INVENTORY_SERVICE_URL: "http://inventory-service:8002"
+      PAYMENT_SERVICE_URL: "http://payment-service:8003"
+      USER_SERVICE_URL: "http://user-service:8004"
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    
+    ports:
+      - "${ORDER_SERVICE_PORT:-8001}:8001"
+    
+    networks:
+      - webapp-network
+    
+    # Wait for dependencies to be healthy before starting
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    
+    labels:
+      # Traefik routing configuration
+      - "traefik.enable=true"
+      - "traefik.http.routers.order.rule=PathPrefix(`/api/v1/orders`)"
+      - "traefik.http.routers.order.entrypoints=web"
+      - "traefik.http.services.order.loadbalancer.server.port=8001"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # INVENTORY SERVICE (Rust + Axum) 🦀
+  # ---------------------------------------------------------------------------
+  # Manages product inventory:
+  # - Track stock levels by SKU and warehouse
+  # - Reserve stock for pending orders
+  # - Release stock for cancelled orders
+  # - Low stock alerts
+  # 
+  # WHY RUST?
+  # - Memory safety without garbage collection
+  # - High performance for concurrent stock operations
+  # - Zero-cost abstractions
+  # ---------------------------------------------------------------------------
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    restart: unless-stopped
+    
+    environment:
+      # Server configuration
+      PORT: "8002"
+      RUST_LOG: "info,inventory_service=debug"
+      
+      # Database connection
+      DATABASE_URL: "postgres://${POSTGRES_USER:-webapp}:${POSTGRES_PASSWORD:-webapp_password}@postgres:5432/${POSTGRES_DB:-orderdb}"
+      
+      # Redis connection
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/1"
+    
+    ports:
+      - "${INVENTORY_SERVICE_PORT:-8002}:8002"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.inventory.rule=PathPrefix(`/api/v1/inventory`)"
+      - "traefik.http.routers.inventory.entrypoints=web"
+      - "traefik.http.services.inventory.loadbalancer.server.port=8002"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # PAYMENT SERVICE (Python + FastAPI)
+  # ---------------------------------------------------------------------------
+  # Handles payment processing:
+  # - Process payments (mock gateway)
+  # - Handle refunds
+  # - Transaction history
+  # - Payment method validation
+  # ---------------------------------------------------------------------------
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    restart: unless-stopped
+    
+    environment:
+      # Server configuration
+      PORT: "8003"
+      
+      # Database connection
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-webapp}:${POSTGRES_PASSWORD:-webapp_password}@postgres:5432/${POSTGRES_DB:-orderdb}"
+      
+      # Redis connection
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/2"
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    
+    ports:
+      - "${PAYMENT_SERVICE_PORT:-8003}:8003"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.payment.rule=PathPrefix(`/api/v1/payments`)"
+      - "traefik.http.routers.payment.entrypoints=web"
+      - "traefik.http.services.payment.loadbalancer.server.port=8003"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # USER SERVICE (Java + Spring Boot)
+  # ---------------------------------------------------------------------------
+  # Manages user accounts and authentication:
+  # - User registration
+  # - Login (JWT token generation)
+  # - Profile management
+  # - Role-based access control
+  # ---------------------------------------------------------------------------
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    restart: unless-stopped
+    
+    environment:
+      # Spring configuration
+      SPRING_PROFILES_ACTIVE: production
+      SERVER_PORT: "8004"
+      
+      # Database connection
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB:-orderdb}"
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-webapp}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-webapp_password}
+      
+      # Redis connection
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: "6379"
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
+      
+      # JWT configuration
+      JWT_SECRET: ${JWT_SECRET:-default_jwt_secret_change_in_production}
+      JWT_EXPIRATION: "86400000"
+      
+      # JVM options for container
+      JAVA_OPTS: "-Xmx512m -Xms256m"
+    
+    ports:
+      - "${USER_SERVICE_PORT:-8004}:8004"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user.rule=PathPrefix(`/api/v1/users`)"
+      - "traefik.http.routers.user.entrypoints=web"
+      - "traefik.http.services.user.loadbalancer.server.port=8004"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # NOTIFICATION SERVICE (Node.js + Express)
+  # ---------------------------------------------------------------------------
+  # Handles notifications and real-time updates:
+  # - Consume order events from RabbitMQ
+  # - Send email notifications (mock)
+  # - WebSocket for real-time UI updates
+  # ---------------------------------------------------------------------------
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    restart: unless-stopped
+    
+    environment:
+      # Server configuration
+      PORT: "8005"
+      NODE_ENV: ${NODE_ENV:-production}
+      
+      # RabbitMQ connection
+      RABBITMQ_URL: "amqp://${RABBITMQ_USER:-webapp}:${RABBITMQ_PASSWORD:-rabbitmq_password}@rabbitmq:5672"
+      
+      # Redis connection (for WebSocket scaling)
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/3"
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8005}:8005"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.notification.rule=PathPrefix(`/api/v1/notifications`) || PathPrefix(`/ws`)"
+      - "traefik.http.routers.notification.entrypoints=web"
+      - "traefik.http.services.notification.loadbalancer.server.port=8005"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8005/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # FRONTEND (Next.js + Shadcn/ui)
+  # ---------------------------------------------------------------------------
+  # Enterprise-grade web UI:
+  # - Dashboard with KPIs
+  # - Order management
+  # - Inventory tracking
+  # - User administration
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    restart: unless-stopped
+    
+    environment:
+      # API Gateway URL (Traefik)
+      NEXT_PUBLIC_API_URL: "http://localhost"
+      
+      # WebSocket URL for real-time updates
+      NEXT_PUBLIC_WS_URL: "ws://localhost/ws"
+      
+      NODE_ENV: ${NODE_ENV:-production}
+    
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      - traefik
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # OBSERVABILITY LAYER (Agents)
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # NODE EXPORTER - Host OS Metrics
+  # ---------------------------------------------------------------------------
+  # Exposes host-level metrics:
+  # - CPU usage (user, system, idle)
+  # - Memory usage (total, available, buffers)
+  # - Disk I/O and space
+  # - Network statistics
+  # - System load
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: node-exporter
+    restart: unless-stopped
+    
+    # Run with host network and PID namespaces for accurate metrics
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    
+    volumes:
+      # Mount host filesystem paths for accurate metrics
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    
+    networks:
+      - webapp-network
+
+  # ---------------------------------------------------------------------------
+  # cADVISOR - Container Metrics
+  # ---------------------------------------------------------------------------
+  # Analyzes resource usage and performance of running containers:
+  # - Per-container CPU usage
+  # - Memory consumption
+  # - Network I/O
+  # - Filesystem usage
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor
+    restart: unless-stopped
+    
+    privileged: true
+    
+    ports:
+      - "${CADVISOR_PORT:-8081}:8080"
+    
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    
+    networks:
+      - webapp-network
+
+  # ---------------------------------------------------------------------------
+  # POSTGRES EXPORTER - PostgreSQL Metrics
+  # ---------------------------------------------------------------------------
+  # Exposes PostgreSQL server metrics:
+  # - Connection count
+  # - Transaction rates
+  # - Lock statistics
+  # - Replication lag
+  # - Table/index sizes
+  # ---------------------------------------------------------------------------
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    restart: unless-stopped
+    
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-webapp}:${POSTGRES_PASSWORD:-webapp_password}@postgres:5432/${POSTGRES_DB:-orderdb}?sslmode=disable"
+    
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # REDIS EXPORTER - Redis Metrics
+  # ---------------------------------------------------------------------------
+  # Exposes Redis server metrics:
+  # - Memory usage
+  # - Connected clients
+  # - Commands processed
+  # - Key count by database
+  # - Hit/miss ratio
+  # ---------------------------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.55.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
+    
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    
+    networks:
+      - webapp-network
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # PROMTAIL - Log Shipping Agent
+  # ---------------------------------------------------------------------------
+  # Collects logs from Docker containers and ships them to Loki
+  # - Automatically discovers Docker containers
+  # - Adds labels for filtering (container name, service, etc.)
+  # - Handles log rotation and delivery
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: promtail
+    restart: unless-stopped
+    
+    volumes:
+      # Docker logs location
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # Promtail configuration
+      - ./infrastructure/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      
+      # Position file (tracks what's been sent)
+      - promtail-positions:/positions
+    
+    command: -config.file=/etc/promtail/promtail-config.yml
+    
+    networks:
+      - webapp-network

@@ -1,0 +1,64 @@
+# =============================================================================
+# TEMPO CONFIGURATION
+# =============================================================================
+# Tempo is a distributed tracing backend.
+#
+# LEARNING NOTES:
+# - Tempo stores traces (series of spans)
+# - Receives traces via OTLP (OpenTelemetry Protocol)
+# - Integrates with Grafana for visualization
+# - Links traces to logs and metrics via exemplars
+# =============================================================================
+
+server:
+  http_listen_port: 3200
+
+# Distributor receives traces from applications
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+# Ingester batches and writes traces
+ingester:
+  max_block_duration: 5m
+
+# Compactor optimizes storage
+compactor:
+  compaction:
+    block_retention: 48h  # Keep traces for 48 hours
+
+# Querier finds traces
+querier:
+  frontend_worker:
+    frontend_address: localhost:9095
+
+# Storage configuration
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks
+
+# Metrics generator (for trace-to-metrics)
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+# Overrides for rate limiting
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

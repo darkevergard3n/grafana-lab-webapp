@@ -1,0 +1,292 @@
+# =============================================================================
+# PROMETHEUS ALERT RULES
+# =============================================================================
+# Alert rules define conditions that trigger alerts.
+#
+# ALERT STRUCTURE:
+# - alert: Name of the alert
+# - expr: PromQL expression that triggers alert when true
+# - for: How long condition must be true before firing
+# - labels: Additional labels for routing
+# - annotations: Human-readable descriptions
+#
+# SEVERITY LEVELS:
+# - critical: Immediate action required (production down)
+# - warning: Should be investigated soon
+# - info: Informational, no action required
+# =============================================================================
+
+groups:
+  # ===========================================================================
+  # SERVICE HEALTH ALERTS
+  # ===========================================================================
+  - name: service_health
+    rules:
+      # Service is down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute."
+          runbook_url: "https://wiki.example.com/runbooks/service-down"
+
+      # Service high error rate
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+          /
+          sum(rate(http_requests_total[5m])) by (service)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} has error rate above 5% (current: {{ $value | humanizePercentage }})"
+
+      # Service high latency
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency on {{ $labels.service }}"
+          description: "95th percentile latency is above 1s (current: {{ $value | humanizeDuration }})"
+
+  # ===========================================================================
+  # OS / HOST ALERTS (Node Exporter)
+  # ===========================================================================
+  - name: host_alerts
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 80% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      # Critical CPU usage
+      - alert: CriticalCPUUsage
+        expr: |
+          100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 95% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 80% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      # Critical memory usage
+      - alert: CriticalMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 95% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk space is below 20% (available: {{ $value | printf \"%.1f\" }}%)"
+
+      # Disk space critical
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Disk space is below 10% (available: {{ $value | printf \"%.1f\" }}%)"
+
+  # ===========================================================================
+  # CONTAINER ALERTS (cAdvisor)
+  # ===========================================================================
+  - name: container_alerts
+    rules:
+      # Container high CPU
+      - alert: ContainerHighCPU
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{name!=""}[5m])) by (name) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} high CPU"
+          description: "Container CPU usage above 80% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      # Container high memory
+      - alert: ContainerHighMemory
+        expr: |
+          (container_memory_usage_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} high memory"
+          description: "Container memory usage above 80% of limit"
+
+      # Container restarting
+      - alert: ContainerRestarting
+        expr: |
+          increase(container_restart_count{name!=""}[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} restarting frequently"
+          description: "Container has restarted {{ $value }} times in the last hour"
+
+  # ===========================================================================
+  # DATABASE ALERTS (PostgreSQL)
+  # ===========================================================================
+  - name: database_alerts
+    rules:
+      # Too many connections
+      - alert: PostgresTooManyConnections
+        expr: |
+          pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection usage high"
+          description: "Connection usage above 80% of max_connections"
+
+      # Slow queries (if available)
+      - alert: PostgresSlowQueries
+        expr: |
+          rate(pg_stat_database_blks_hit[5m]) / 
+          (rate(pg_stat_database_blks_hit[5m]) + rate(pg_stat_database_blks_read[5m])) < 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL cache hit ratio low"
+          description: "Cache hit ratio is below 90%, queries may be slow"
+
+  # ===========================================================================
+  # REDIS ALERTS
+  # ===========================================================================
+  - name: redis_alerts
+    rules:
+      # Redis down
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+
+      # Redis high memory
+      - alert: RedisHighMemory
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis memory usage above 80% of maxmemory"
+
+  # ===========================================================================
+  # APPLICATION-SPECIFIC ALERTS
+  # ===========================================================================
+  - name: application_alerts
+    rules:
+      # Low inventory alert
+      - alert: LowInventoryStock
+        expr: inventory_low_stock_items > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: inventory-service
+        annotations:
+          summary: "Multiple items with low stock"
+          description: "{{ $value }} items are below low stock threshold"
+
+      # High order failure rate
+      - alert: HighOrderFailureRate
+        expr: |
+          rate(orders_created_total{status="failed"}[5m]) 
+          / rate(orders_created_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: order-service
+        annotations:
+          summary: "High order failure rate"
+          description: "Order failure rate above 10%"
+
+      # Payment failures
+      - alert: HighPaymentFailureRate
+        expr: |
+          rate(payments_processed_total{status="failed"}[5m])
+          / rate(payments_processed_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: payment-service
+        annotations:
+          summary: "High payment failure rate"
+          description: "Payment failure rate above 5% - revenue impact!"
+
+  # ===========================================================================
+  # OBSERVABILITY STACK ALERTS
+  # ===========================================================================
+  - name: observability_alerts
+    rules:
+      # Prometheus scrape failures
+      - alert: PrometheusTargetMissing
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus target missing: {{ $labels.job }}"
+          description: "Target {{ $labels.instance }} is not being scraped"
+
+      # Loki not receiving logs
+      - alert: LokiNoLogs
+        expr: |
+          sum(rate(loki_ingester_chunks_created_total[5m])) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki not receiving logs"
+          description: "No logs have been ingested in the last 10 minutes"

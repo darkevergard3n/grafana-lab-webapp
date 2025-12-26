@@ -1,0 +1,137 @@
+# =============================================================================
+# ALERTMANAGER CONFIGURATION
+# =============================================================================
+# Alertmanager handles alerts sent by Prometheus.
+# It manages silencing, inhibition, aggregation, and sends notifications.
+#
+# NOTIFICATION CHANNELS:
+# - Email (SMTP)
+# - Slack
+# - Webhook (custom integration)
+# - PagerDuty, OpsGenie, etc.
+#
+# UPDATE: Configure your notification channels below!
+# =============================================================================
+
+global:
+  # How long to wait before sending a notification again
+  resolve_timeout: 5m
+  
+  # SMTP settings for email notifications
+  # UPDATE THESE with your SMTP server details
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alertmanager@example.com'
+  smtp_auth_username: 'your-email@gmail.com'
+  smtp_auth_password: 'your-app-password'
+  smtp_require_tls: true
+
+  # Slack webhook URL (if using Slack)
+  # slack_api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+
+# =============================================================================
+# ROUTE CONFIGURATION
+# =============================================================================
+# Routes define how alerts are grouped and where they're sent
+route:
+  # Default receiver
+  receiver: 'default-receiver'
+  
+  # Group alerts by these labels
+  group_by: ['alertname', 'service', 'severity']
+  
+  # How long to wait before sending first notification
+  group_wait: 30s
+  
+  # How long to wait before sending notification about new alerts in group
+  group_interval: 5m
+  
+  # How long to wait before re-sending notification
+  repeat_interval: 4h
+  
+  # Child routes for specific alert handling
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 1h
+    
+    # Warning alerts
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      repeat_interval: 4h
+    
+    # Service-specific routing
+    - match:
+        service: order-service
+      receiver: 'order-team'
+    
+    - match:
+        service: payment-service
+      receiver: 'payment-team'
+
+# =============================================================================
+# INHIBITION RULES
+# =============================================================================
+# Inhibition rules suppress notifications when certain other alerts are firing
+inhibit_rules:
+  # If critical alert is firing, suppress warning alerts for same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'service']
+
+# =============================================================================
+# RECEIVERS
+# =============================================================================
+# Receivers define notification channels
+receivers:
+  # Default receiver (webhook for testing)
+  - name: 'default-receiver'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    # Email notification
+    email_configs:
+      - to: 'oncall@example.com'
+        send_resolved: true
+        headers:
+          Subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+    # Slack notification (uncomment and configure)
+    # slack_configs:
+    #   - channel: '#alerts-critical'
+    #     send_resolved: true
+    #     title: '🚨 Critical Alert'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'team@example.com'
+        send_resolved: true
+        headers:
+          Subject: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+
+  # Order team
+  - name: 'order-team'
+    email_configs:
+      - to: 'order-team@example.com'
+        send_resolved: true
+
+  # Payment team
+  - name: 'payment-team'
+    email_configs:
+      - to: 'payment-team@example.com'
+        send_resolved: true
+
+# =============================================================================
+# TEMPLATES (Optional)
+# =============================================================================
+# templates:
+#   - '/etc/alertmanager/templates/*.tmpl'

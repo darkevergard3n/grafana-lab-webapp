@@ -1,0 +1,140 @@
+# =============================================================================
+# CARGO.TOML - Rust Package Manifest
+# =============================================================================
+# This file defines the Rust project and its dependencies.
+# Cargo (Rust's package manager) uses this to build the project.
+#
+# LEARNING NOTES:
+# - [package] section defines project metadata
+# - [dependencies] lists external crates (libraries)
+# - Features in {} enable specific functionality of a crate
+# =============================================================================
+
+[package]
+# Project name - must match the binary name
+name = "inventory-service"
+
+# Semantic versioning (major.minor.patch)
+version = "1.0.0"
+
+# Rust edition - 2021 is the latest stable
+# Each edition introduces new features and syntax
+edition = "2021"
+
+# Brief description of the service
+description = "Inventory management microservice for the Order Management System"
+
+# Author information
+authors = ["Lab Developer"]
+
+# =============================================================================
+# DEPENDENCIES
+# =============================================================================
+# External crates (libraries) used by this service
+#
+# VERSION SYNTAX:
+# - "1.0"     = Any 1.x.x version (flexible)
+# - "1.0.5"   = Exactly 1.0.5 (strict)
+# - "~1.0.5"  = 1.0.x where x >= 5 (patch updates only)
+# =============================================================================
+
+[dependencies]
+# ---------------------------------------------------------------------------
+# WEB FRAMEWORK - Axum
+# ---------------------------------------------------------------------------
+# Axum is a modern, ergonomic web framework built on Tokio
+# It's designed for building reliable, async web services
+# https://github.com/tokio-rs/axum
+axum = { version = "0.7", features = ["macros"] }
+
+# ---------------------------------------------------------------------------
+# ASYNC RUNTIME - Tokio
+# ---------------------------------------------------------------------------
+# Tokio is Rust's async runtime. It provides:
+# - Async I/O (network, filesystem)
+# - Task scheduling
+# - Timers
+# The "full" feature enables all components
+tokio = { version = "1", features = ["full"] }
+
+# ---------------------------------------------------------------------------
+# SERIALIZATION - Serde
+# ---------------------------------------------------------------------------
+# Serde is the de-facto serialization framework in Rust
+# "derive" feature allows #[derive(Serialize, Deserialize)] on structs
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ---------------------------------------------------------------------------
+# DATABASE - SQLx
+# ---------------------------------------------------------------------------
+# SQLx is an async SQL toolkit with compile-time query checking
+# Features:
+# - runtime-tokio: Use Tokio as async runtime
+# - postgres: PostgreSQL driver
+# - uuid: UUID type support
+# - chrono: DateTime support
+# - migrate: Database migrations
+sqlx = { version = "0.7", features = [
+    "runtime-tokio",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate"
+]}
+
+# ---------------------------------------------------------------------------
+# REDIS CLIENT
+# ---------------------------------------------------------------------------
+# Async Redis client for caching
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# ---------------------------------------------------------------------------
+# METRICS - Prometheus
+# ---------------------------------------------------------------------------
+# Libraries for exposing Prometheus-format metrics
+# metrics: Core metrics API (counters, gauges, histograms)
+# metrics-exporter-prometheus: Exports metrics in Prometheus text format
+metrics = "0.22"
+metrics-exporter-prometheus = "0.13"
+
+# ---------------------------------------------------------------------------
+# LOGGING & TRACING
+# ---------------------------------------------------------------------------
+# tracing: Structured logging and distributed tracing
+# tracing-subscriber: Log output formatting
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# ---------------------------------------------------------------------------
+# UTILITIES
+# ---------------------------------------------------------------------------
+# uuid: Generate unique identifiers for inventory items
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# chrono: Date and time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# thiserror: Convenient error type definitions
+thiserror = "1"
+
+# anyhow: Flexible error handling for applications
+anyhow = "1"
+
+# dotenvy: Load environment variables from .env file
+dotenvy = "0.15"
+
+# tower-http: HTTP middleware (CORS, compression, etc.)
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# =============================================================================
+# BUILD PROFILE
+# =============================================================================
+# Optimize release builds for size (good for containers)
+[profile.release]
+# Link-time optimization for smaller binary
+lto = true
+# Single codegen unit for better optimization
+codegen-units = 1
+# Strip debug symbols
+strip = true

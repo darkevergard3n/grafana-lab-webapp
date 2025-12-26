@@ -1,0 +1,159 @@
+# =============================================================================
+# GRAFANA OBSERVABILITY STACK - Docker Compose
+# =============================================================================
+# This docker-compose runs on the GRAFANA VM (separate from webapp VM).
+#
+# COMPONENTS:
+# - Prometheus: Metrics collection and storage
+# - Alertmanager: Alert routing and notifications
+# - Grafana: Visualization dashboards
+# - Loki: Log aggregation
+# - Tempo: Distributed tracing
+#
+# USAGE:
+#   1. Copy this folder to your Grafana VM
+#   2. Update WEBAPP_VM_IP in .env
+#   3. Run: docker compose up -d
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # PROMETHEUS - Metrics Collection
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    restart: unless-stopped
+    
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
+    
+    ports:
+      - "9090:9090"
+    
+    networks:
+      - monitoring
+
+  # ===========================================================================
+  # ALERTMANAGER - Alert Routing & Notifications
+  # ===========================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: alertmanager
+    restart: unless-stopped
+    
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    
+    ports:
+      - "9093:9093"
+    
+    networks:
+      - monitoring
+
+  # ===========================================================================
+  # GRAFANA - Visualization
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: grafana
+    restart: unless-stopped
+    
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
+      # Enable unified alerting
+      - GF_UNIFIED_ALERTING_ENABLED=true
+      - GF_ALERTING_ENABLED=false
+    
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    
+    ports:
+      - "3000:3000"
+    
+    networks:
+      - monitoring
+    
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+      - alertmanager
+
+  # ===========================================================================
+  # LOKI - Log Aggregation
+  # ===========================================================================
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: loki
+    restart: unless-stopped
+    
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    
+    ports:
+      - "3100:3100"
+    
+    command: -config.file=/etc/loki/local-config.yaml
+    
+    networks:
+      - monitoring
+
+  # ===========================================================================
+  # TEMPO - Distributed Tracing
+  # ===========================================================================
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: tempo
+    restart: unless-stopped
+    
+    volumes:
+      - ./tempo/tempo-config.yml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/tmp/tempo
+    
+    ports:
+      - "3200:3200"   # Tempo API
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    
+    command: -config.file=/etc/tempo/tempo.yaml
+    
+    networks:
+      - monitoring
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  monitoring:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+  loki_data:
+  tempo_data:

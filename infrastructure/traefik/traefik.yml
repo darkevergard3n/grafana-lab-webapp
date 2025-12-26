@@ -1,0 +1,93 @@
+# =============================================================================
+# TRAEFIK STATIC CONFIGURATION
+# =============================================================================
+# Traefik is used as API Gateway / Reverse Proxy for all microservices.
+#
+# LEARNING NOTES:
+# - Static config: loaded once at startup (this file)
+# - Dynamic config: can change at runtime (Docker labels)
+# - EntryPoints: Define where Traefik listens
+# - Providers: Where Traefik gets routing rules (Docker)
+# =============================================================================
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# =============================================================================
+# API & DASHBOARD
+# =============================================================================
+# Enable the Traefik dashboard for debugging
+api:
+  dashboard: true
+  insecure: true  # For lab only! Use authentication in production
+
+# =============================================================================
+# ENTRYPOINTS
+# =============================================================================
+# EntryPoints define the ports Traefik listens on
+entryPoints:
+  # Main HTTP entrypoint
+  web:
+    address: ":80"
+  
+  # Metrics endpoint (for Prometheus scraping)
+  metrics:
+    address: ":8082"
+
+# =============================================================================
+# PROVIDERS
+# =============================================================================
+# Providers tell Traefik where to get routing configuration
+providers:
+  # Docker provider - reads labels from containers
+  docker:
+    # Docker socket path
+    endpoint: "unix:///var/run/docker.sock"
+    
+    # Only expose containers with traefik.enable=true label
+    exposedByDefault: false
+    
+    # Network to use for routing
+    network: webapp-network
+    
+    # Watch for container changes
+    watch: true
+
+# =============================================================================
+# METRICS
+# =============================================================================
+# Expose Prometheus metrics
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filters:
+    statusCodes:
+      - "400-599"
+
+# =============================================================================
+# HEALTH CHECK
+# =============================================================================
+ping:
+  entryPoint: web

@@ -1,0 +1,61 @@
+# =============================================================================
+# PYTHON DEPENDENCIES - Payment Service
+# =============================================================================
+# Install with: pip install -r requirements.txt
+#
+# VERSION PINNING:
+# We pin exact versions (==) for reproducible builds.
+# Use ~= for compatible releases (e.g., ~=1.0.0 allows 1.0.x)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# WEB FRAMEWORK
+# -----------------------------------------------------------------------------
+# FastAPI: Modern, fast web framework for building APIs
+# - Automatic OpenAPI documentation
+# - Type hints for validation
+# - Async support
+fastapi==0.109.0
+
+# Uvicorn: ASGI server for running FastAPI
+# Standard extra includes uvloop and httptools for better performance
+uvicorn[standard]==0.27.0
+
+# -----------------------------------------------------------------------------
+# DATA VALIDATION
+# -----------------------------------------------------------------------------
+# Pydantic: Data validation using Python type annotations
+pydantic==2.5.3
+
+# Email validator for Pydantic email fields
+email-validator==2.1.0
+
+# -----------------------------------------------------------------------------
+# DATABASE
+# -----------------------------------------------------------------------------
+# asyncpg: Fast PostgreSQL client library for Python asyncio
+asyncpg==0.29.0
+
+# -----------------------------------------------------------------------------
+# CACHING
+# -----------------------------------------------------------------------------
+# redis: Async Redis client
+redis==5.0.1
+
+# -----------------------------------------------------------------------------
+# MONITORING
+# -----------------------------------------------------------------------------
+# prometheus-client: Official Prometheus Python client
+prometheus-client==0.19.0
+
+# -----------------------------------------------------------------------------
+# HTTP CLIENT
+# -----------------------------------------------------------------------------
+# httpx: Async HTTP client (for calling other services)
+httpx==0.26.0
+
+# -----------------------------------------------------------------------------
+# UTILITIES
+# -----------------------------------------------------------------------------
+# python-dotenv: Load environment variables from .env file
+python-dotenv==1.0.0
