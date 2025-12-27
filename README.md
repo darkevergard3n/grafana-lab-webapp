@@ -1,4 +1,4 @@
-# 🏭 Enterprise Order Management System
+# Enterprise Order Management System
 
 ## Grafana Observability Lab - Complete Microservices Project
 
@@ -6,7 +6,7 @@ This project is a **production-grade, enterprise-style Order Management System**
 
 ---
 
-## 📚 Table of Contents
+## Table of Contents
 
 1. [Project Purpose](#-project-purpose)
 2. [Architecture Overview](#-architecture-overview)
@@ -19,7 +19,7 @@ This project is a **production-grade, enterprise-style Order Management System**
 
 ---
 
-## 🎯 Project Purpose
+## Project Purpose
 
 This webapp serves as a **comprehensive observability laboratory** where you can:
 
@@ -42,7 +42,7 @@ This creates diverse, realistic monitoring scenarios.
 
 ---
 
-## 🏗️ Architecture Overview
+##  Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -61,12 +61,12 @@ This creates diverse, realistic monitoring scenarios.
 │         │          │          │          │          │                   │
 │  ┌──────┴───┐ ┌────┴────┐ ┌───┴────┐ ┌───┴────┐ ┌───┴─────┐           │
 │  │  Order   │ │Inventory│ │Payment │ │  User  │ │  Notif  │           │
-│  │   Go     │ │ 🦀 Rust │ │ Python │ │  Java  │ │ Node.js │           │
+│  │   Go     │ │  Rust │ │ Python │ │  Java  │ │ Node.js │           │
 │  │  :8001   │ │  :8002  │ │ :8003  │ │ :8004  │ │  :8005  │           │
 │  └────┬─────┘ └────┬────┘ └───┬────┘ └───┬────┘ └────┬────┘           │
 │       │            │          │          │           │                  │
 │  ┌────┴────────────┴──────────┴──────────┴───────────┴────┐            │
-│  │                    DATA LAYER                           │            │
+│  │                    DATA LAYER                          │            │
 │  │  PostgreSQL :5432 │ Redis :6379 │ RabbitMQ :5672       │            │
 │  └────────────────────────────────────────────────────────┘            │
 │                                                                         │
@@ -95,14 +95,14 @@ For detailed architecture explanation, see [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 
-## 🛠️ Technology Stack
+##  Technology Stack
 
 ### Microservices (Polyglot)
 
 | Service | Language | Framework | Port | Purpose |
 |---------|----------|-----------|------|---------|
 | Order | Go | Gin | 8001 | Order CRUD, workflow |
-| Inventory | Rust 🦀 | Axum | 8002 | Stock management |
+| Inventory | Rust | Axum | 8002 | Stock management |
 | Payment | Python | FastAPI | 8003 | Payment processing |
 | User | Java | Spring Boot | 8004 | Auth & user management |
 | Notification | Node.js | Express | 8005 | Email/SMS worker |
@@ -129,7 +129,7 @@ For detailed architecture explanation, see [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 
-## 📊 Monitoring Scenarios Covered
+## Monitoring Scenarios Covered
 
 | Scenario | How It's Achieved | Grafana Component |
 |----------|-------------------|-------------------|
@@ -143,7 +143,7 @@ For detailed architecture explanation, see [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -190,7 +190,7 @@ grafana-lab-webapp/
 │
 ├── 📁 services/                    # Microservices source code
 │   ├── 📁 order-service/           # Go + Gin
-│   ├── 📁 inventory-service/       # Rust + Axum 🦀
+│   ├── 📁 inventory-service/       # Rust + Axum 
 │   ├── 📁 payment-service/         # Python + FastAPI
 │   ├── 📁 user-service/            # Java + Spring Boot
 │   ├── 📁 notification-service/    # Node.js + Express
@@ -215,7 +215,7 @@ grafana-lab-webapp/
 
 ---
 
-## 📖 Learning Path
+## Learning Path
 
 ### Week 1: Foundation
 1. Deploy the webapp stack
@@ -243,7 +243,7 @@ grafana-lab-webapp/
 
 ---
 
-## 📚 Documentation
+##  Documentation
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Deep dive into system design
 - [DEPLOYMENT.md](./DEPLOYMENT.md) - Step-by-step deployment guide
@@ -253,22 +253,4 @@ grafana-lab-webapp/
 
 ---
 
-## 🤝 Contributing
-
-This is a learning project! Feel free to:
-- Add new monitoring scenarios
-- Improve documentation
-- Add more microservices
-- Create better dashboards
-
 ---
-
-## 📝 License
-
-MIT License - Use freely for learning and development.
-
----
-
-**Happy Learning! 🎓**
-
-Built with ❤️ for Grafana Stack enthusiasts
